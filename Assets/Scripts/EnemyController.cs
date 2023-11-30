@@ -1,8 +1,11 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.AI;
-
+/// <summary>
+/// for Enemy animations and enemy behaviors
+/// </summary>
 public class EnemyController : MonoBehaviour
 {
     /*
@@ -13,23 +16,24 @@ public class EnemyController : MonoBehaviour
      * [] Add sounds
      */
     // Start is called before the first frame update
-    public Transform cat;
+    public Transform player;
     NavMeshAgent agent;
-    public float lerpSpeed,rotateTime,rotateAmount;
-    private float rotateRight, rotateLeft, timer, rotateTimer;
-    private bool rotating=false,triggered=false;
-    public Transform lookPoint;
+    public float lerpRotationSpeed;
+    public float rotateTime;
+    public float rotateAmount;
+    private float rotateRight;
+    private float rotateLeft;
+    private float maxDegrees;
+    private float rotateTimer;
+    private bool enemyRotating = false;
+    private bool enemyAlerted = false;
+    public Transform raycastOrigin;
     public GameObject gameOverScreen;
     private Quaternion currentRotation;
-
     //PlayerDetection
     public MeshFilter viewMeshFilter;
     Mesh viewMesh;
-
-
-
     Animator animator;
-
     //patrolling
     public Vector3[] patrolPoints;
     public float waitBetweenPatrol;
@@ -39,43 +43,58 @@ public class EnemyController : MonoBehaviour
     private float catDistance;
     public float visionResoulution;
 
+    //add a delay for when the enemy turns around
+    public float waitTimeBeforeRotation = 0.5f;
+
     void Start()
     {
         viewMesh = new Mesh();
         viewMesh.name = "View Mesh";
         viewMeshFilter.mesh = viewMesh;
 
-        animator = gameObject.GetComponent<Animator>();
+        animator = GetComponent<Animator>();
         patrolWaitTimer = waitBetweenPatrol;
         rotateTimer = 0;
         rotateRight = rotateAmount;
         rotateLeft = rotateAmount;
         agent = GetComponent<NavMeshAgent>();
-        Quaternion currentRotation = transform.rotation;
-
     }
 
-    // Update is called once per frame
     void Update()
     {
         if (VisibleOnScreen())
         {
-            CatDetected();
+            // this.GetComponentInChildren<SkinnedMeshRenderer>().enabled = true;
+            // this.GetComponentInChildren<MeshRenderer>().enabled = true;
+            SearchForCat();
         }
-        
-        // //Debug.DrawRay(face.position, new Vector3(face.forward.x + faceAngles.x,face.forward.y + faceAngles.y, face.forward.z + faceAngles.z) *faceDetectDistance);
-        // if (Input.GetKey(KeyCode.Space))
+        // else
         // {
-        //     LookAround();
+        //     this.GetComponentInChildren<SkinnedMeshRenderer>().enabled = false;
+        //     this.GetComponentInChildren<MeshRenderer>().enabled = false;
+        //     SearchForCat();
         // }
 
         if (AgentReachedDestination(agent))
         {
             LookAround();
         }
+        else
+        {
+            Patrol();
+        }
+
         animator.SetBool("isWalking", agent.velocity.magnitude > 0);
-        Patrol();
     }
+
+    /// <summary>
+    /// - is enemy is in camera frustrum, begin patrol for cat
+    /// 
+    /// - is not on screen, turn off renderer?
+    /// </summary>
+    /// <returns>
+    /// enemy is visible on screen
+    /// </returns>
 
     bool VisibleOnScreen()
     {
@@ -84,19 +103,9 @@ public class EnemyController : MonoBehaviour
         return onScreen;
     }
 
-    public void InspectFurniture(Transform furniture)
-    {
-        triggered = true;
-        rotateRight = rotateLeft = 90;
-        rotating = false;
-        
-        agent.SetDestination(furniture.position);
-       
-    }
-
     bool AgentReachedDestination(NavMeshAgent a)
     {
-        if (triggered && !a.pathPending)
+        if (enemyAlerted && !a.pathPending)
         {
             if (a.remainingDistance <= a.stoppingDistance)
             {
@@ -112,77 +121,68 @@ public class EnemyController : MonoBehaviour
     void Patrol()
     {
         //Debug.Log(AgentReachedDestination(agent));
-        if (patrolPoints.Length > 0 && !triggered && patrolWaitTimer >= waitBetweenPatrol )
+        if (patrolPoints.Length > 0 && !enemyAlerted && patrolWaitTimer >= waitBetweenPatrol)
         {
             int patrolPoint = Random.Range(0, patrolPoints.Length);
             agent.SetDestination(patrolPoints[patrolPoint]);
             patrolWaitTimer = 0;
         }
-            patrolWaitTimer += Time.deltaTime;
-        
+        patrolWaitTimer += Time.deltaTime;
+
     }
 
-    void LookAround()
+     void LookAround()
     {
-        if (!rotating)
+        Debug.Log("Looking Around");
+        if (!enemyRotating)
         {
-            //Debug.Log("inside the rotating condition" + currentRotation + " rotate Right: "+rotateRight);
             //making sure the angle stays between 0 and 360. If over, subtract 360. If under, add the negative number to 360
             rotateRight = currentRotation.eulerAngles.y + rotateRight > 360 ? (currentRotation.eulerAngles.y + rotateRight) - 360 : currentRotation.eulerAngles.y + rotateRight;
             rotateLeft = currentRotation.eulerAngles.y - rotateLeft < 0 ? 360 + (currentRotation.eulerAngles.y - rotateLeft) : currentRotation.eulerAngles.y - rotateLeft;
             rotateAmount = rotateRight;
-            rotating = true;
-            //Debug.Log("rotate right: " + rotateRight + " rotate left " + rotateLeft + " rotateAmount: " + rotateAmount);
+            enemyRotating = true;
         }
         else
         {
             currentRotation = transform.rotation;
-            transform.rotation = Quaternion.RotateTowards(currentRotation, Quaternion.Euler(0, rotateAmount, 0), timer);
-            timer += lerpSpeed * Time.deltaTime;
+            transform.rotation = Quaternion.RotateTowards(currentRotation, Quaternion.Euler(0, rotateAmount, 0), maxDegrees);
+            maxDegrees += lerpRotationSpeed * Time.deltaTime;
             if (Mathf.Abs((int)transform.eulerAngles.y) == Mathf.Abs((int)rotateAmount))
             {
                 //invert the rotation
                 rotateAmount = rotateAmount == rotateRight ? rotateLeft : rotateRight;
-                timer = 0;
+                maxDegrees = 0;
                 rotateTimer++;
                 if (rotateTimer >= rotateTime)
                 {
                     rotateRight = rotateLeft = 90;
-                    triggered = false;
+                    enemyAlerted = false;
                     rotateTimer = 0;
-                    rotating = false;
+                    enemyRotating = false;
                 }
             }
         }
 
     }
 
-    //private void FixedUpdate()
-    //{
-        //RaycastHit hit,hit2;
-        //int layerMask = 1 << 8;
-        //Debug.DrawRay(lookPoint.position, lookPoint.forward * playerDetectDistance);
-        //if (Physics.Raycast(lookPoint.position, lookPoint.forward, out hit, playerDetectDistance, ~layerMask))
-        //{
-        //    if (hit.transform.gameObject.layer == LayerMask.NameToLayer("Player"))
-        //    {
-        //       // gameOverScreen.GetComponent<GameOver>().toggleGameOverScreen();
-        //    }
+    //given a furniture object from an event, perform inspection
 
-        //}
-        //if (Physics.Raycast(face.position, new Vector3(face.forward.x + faceAngles.x, face.forward.y + faceAngles.y, face.forward.z + faceAngles.z), out hit2, faceDetectDistance, ~layerMask))
-        //{
- 
-        //    if (hit2.transform.gameObject.layer == LayerMask.NameToLayer("Player"))
-        //    {
-        //        //gameOverScreen.GetComponent<GameOver>().toggleGameOverScreen();
-        //    }
+    //i would like the enemy ai to wait a few seconds before inspection begins 
 
-        //}
+    //i will turn this into a coroutine
+    public IEnumerator InspectFurniture(Vector3 position)
+    {
+        yield return new WaitForSeconds(waitTimeBeforeRotation);
+        enemyAlerted = true;
+        rotateRight = rotateLeft = 90;
+        enemyRotating = false;
+        //time before beginning inspection
+        agent.SetDestination(position);
 
-    //}
+       
+    }
 
-    Vector3 GetAnglesDir(float angle, bool globalAngle)
+    Vector3 GetAngleDirection(float angle, bool globalAngle)
     {
         if (!globalAngle)
         {
@@ -191,24 +191,25 @@ public class EnemyController : MonoBehaviour
         return new Vector3(Mathf.Sin(angle * Mathf.Deg2Rad), 0, Mathf.Cos(angle * Mathf.Deg2Rad));
     }
 
-   
 
-    void CatDetected()
+
+    void SearchForCat()
     {
         DrawVision();
-        catDistance = Vector3.Distance(transform.position, cat.position);
+        catDistance = Vector3.Distance(transform.position, player.position);
         if (catDistance <= viewRadius)
         {
-            Vector3 catDir = (cat.position - transform.position).normalized;
+            Vector3 catDir = (player.position - transform.position).normalized;
             if (Vector3.Angle(transform.forward, catDir) < viewAngle / 2)
             {
                 RaycastHit hit;
-                if (Physics.Raycast(lookPoint.transform.position, catDir, out hit, catDistance))
+                if (Physics.Raycast(raycastOrigin.transform.position, catDir, out hit, catDistance))
                 {
                     //Debug.Log("GameOver");
                     if (hit.transform.gameObject.tag == "Player")
                     {
-                        gameOverScreen.GetComponent<GameOver>().toggleGameOverScreen();
+                        // gameOverScreen.GetComponent<GameOver>().toggleGameOverScreen();
+                        Debug.Log("Hit Player!");
                     }
                 }
             }
@@ -216,18 +217,19 @@ public class EnemyController : MonoBehaviour
 
     }
 
+    //for coned raycast
     ViewCastInfo ViewCast(float globalAngle)
     {
-        Vector3 dir = GetAnglesDir(globalAngle, true);
+        Vector3 dir = GetAngleDirection(globalAngle, true);
         RaycastHit hit;
 
         if (Physics.Raycast(transform.position, dir, out hit, viewRadius))
         {
             GameObject hitObject = hit.transform.gameObject;
-            if(hitObject.tag == "Walls" || hitObject.layer == LayerMask.NameToLayer("Furniture"))
-            return new ViewCastInfo(true, hit.point, hit.distance, globalAngle);
+            if (hitObject.tag == "Walls" || hitObject.layer == LayerMask.NameToLayer("Furniture"))
+                return new ViewCastInfo(true, hit.point, hit.distance, globalAngle);
         }
-            return new ViewCastInfo(false, transform.position + dir * viewRadius, viewRadius, globalAngle);
+        return new ViewCastInfo(false, transform.position + dir * viewRadius, viewRadius, globalAngle);
     }
 
     //Raycast info struct
@@ -248,6 +250,7 @@ public class EnemyController : MonoBehaviour
     }
 
 
+    // draws coned raycast
     void DrawVision()
     {
         int rayCount = Mathf.RoundToInt(viewAngle * visionResoulution);
@@ -282,5 +285,5 @@ public class EnemyController : MonoBehaviour
 
     }
 
-    
+
 }
